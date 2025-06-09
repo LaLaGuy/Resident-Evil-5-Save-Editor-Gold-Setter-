@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Resident Evil 5 Save Editor</title>
+</head>
+<body>
+  <h2>Resident Evil 5 Save Editor (Gold Setter)</h2>
+  <input type="file" id="fileInput">
+  <br><br>
+  <label>Gold Amount: <input type="number" id="goldAmount"></label>
+  <br><br>
+  <button onclick="modifySave()">Modify and Download</button>
+
+  <script>
+    const MAGIC = [0x00, 0x21, 0x11, 0x08, 0xc0, 0x4b, 0x00, 0x00];
+    let decoded = null;
+    let originalEncoded = null;
+
+    function xorBlock(block, key) {
+      return block.map((b, i) => b ^ key[i]);
+    }
+
+    function decodeBuffer(buffer) {
+      const decoded = [];
+      let key = MAGIC.slice();
+      for (let i = 0; i < buffer.length; i += 8) {
+        const chunk = buffer.slice(i, i + 8);
+        const decodedChunk = xorBlock([...chunk], key);
+        decoded.push(...decodedChunk);
+        key = [...chunk];
+      }
+      return new Uint8Array(decoded);
+    }
+
+    function encodeBuffer(buffer) {
+      const encoded = [];
+      let key = MAGIC.slice();
+      for (let i = 0; i < buffer.length; i += 8) {
+        const chunk = buffer.slice(i, i + 8);
+        const encodedChunk = xorBlock([...chunk], key);
+        encoded.push(...encodedChunk);
+        key = encodedChunk;
+      }
+      return new Uint8Array(encoded);
+    }
+
+    function readUInt32LE(buf, offset) {
+      return buf[offset] | (buf[offset+1] << 8) | (buf[offset+2] << 16) | (buf[offset+3] << 24);
+    }
+
+    function writeUInt32LE(buf, offset, value) {
+      buf[offset] = value & 0xFF;
+      buf[offset + 1] = (value >> 8) & 0xFF;
+      buf[offset + 2] = (value >> 16) & 0xFF;
+      buf[offset + 3] = (value >> 24) & 0xFF;
+    }
+
+    function checkSum(buf, seekpos, iters, ret) {
+      for (let i = 0; i < iters; i++) {
+        const offset = seekpos + i * 4;
+        if (offset + 3 >= buf.length) break;
+        const val = readUInt32LE(buf, offset);
+        ret = (ret + val) >>> 0;
+      }
+      return ret;
+    }
+
+    function calculateChecksum(buf) {
+      const first = checkSum(buf, 0x10, 0xEE7, 0);
+      return checkSum(buf, 0x3BB0, 0x5C0, first);
+    }
+
+    document.getElementById('fileInput').addEventListener('change', function () {
+      const file = this.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function () {
+        const buffer = new Uint8Array(reader.result);
+        originalEncoded = buffer;
+        decoded = decodeBuffer(buffer);
+
+        // Show current gold
+        const currentGold = readUInt32LE(decoded, 0x194);
+        document.getElementById('goldAmount').value = currentGold;
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    function modifySave() {
+      if (!decoded) return alert("Please upload a save file first.");
+      
+      const goldAmount = parseInt(document.getElementById('goldAmount').value, 10);
+      writeUInt32LE(decoded, 0x194, goldAmount);
+
+      // Update checksum
+      const checksum = calculateChecksum(decoded);
+      writeUInt32LE(decoded, 0x08, checksum);
+
+      const newEncoded = encodeBuffer(decoded);
+
+      // Trigger download
+      const blob = new Blob([newEncoded], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "savedata.bin";
+      a.click();
+    }
+  </script>
+</body>
+</html>
